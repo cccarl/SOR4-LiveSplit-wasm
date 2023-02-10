@@ -16,7 +16,6 @@ impl ProcessInfo {
 }
 
 
-
 struct State {
     process_info: Option<ProcessInfo>,
     watchers: Watchers,
@@ -32,8 +31,8 @@ struct Watchers {
 impl State {
 
     fn startup(&mut self) {
-        self.started_up = true;
         asr::print_message("Started up!!!!!");
+        self.started_up = true;
     }
 
     fn init(&mut self) {
@@ -55,6 +54,16 @@ impl State {
             // early return to never work with a None process
             return;
         }
+
+        let process = &self.process_info.as_ref().unwrap().game;
+        let Ok(main_module_addr) = process.get_module_address("SOR4.exe")
+        else {
+            asr::print_message("COULD NOT GET MODULE ADDRESS");
+            return;
+        };
+
+        let submenus_open = process.read_pointer_path64::<i32>(main_module_addr.0, &SUBMENUS_OPEN_PATH).unwrap();
+        asr::print_message(&format!("Acum frames: {}", submenus_open) );
         
     }
 }

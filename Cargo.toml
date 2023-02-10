@@ -1,0 +1,22 @@
+[package]
+name = "sor4-wasm-lso-controller"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+spinning_top = "0.2.3"
+asr = { git = "https://github.com/CryZe/asr", features = ["integer-vars", "derive"] }
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+lto = true
+panic = "abort"
+codegen-units = 1
+strip = true
+
+[profile.release.build-override]
+opt-level = 0

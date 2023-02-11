@@ -23,12 +23,14 @@ fn read_value<T: Copy + std::fmt::Display + bytemuck::Pod>(process: &Process, ma
 }
 
 struct ProcessInfo {
-    game: Process
+    game: Process,
+    main_module_address: asr::Address,
 }
 
 impl ProcessInfo {
     fn new(process: Process) -> Self {
         Self {
+            main_module_address: process.get_module_address("SOR4.exe").unwrap_or(asr::Address(0)),
             game: process,
         }
     }
@@ -40,6 +42,7 @@ struct State {
     watchers: Watchers,
     values: MemoryValues,
     started_up: bool,
+    igt: GameTime,
 }
 
 struct Watchers {
@@ -51,7 +54,23 @@ struct Watchers {
 struct MemoryValues {
     submenus_open: Pair<i32>,
     current_section_frames: Pair<i32>,
-    acumm_frames: Pair<i32>,
+    accum_frames: Pair<i32>,
+}
+
+struct GameTime {
+    seconds: f64,
+}
+
+impl GameTime {
+    // LS usually reads garbage for a moment on loading screens so this ensures that the new game time to be set is a reasonable value
+    fn calculate_game_time(&mut self, current_section_frames: i32, accum_frames: i32) {
+        let new_igt: f64 = (current_section_frames + accum_frames) as f64 / 60.0;
+
+        // do not update igt if the new time is lower or it did a huge jump forwards, also reset to 0 and jump from a 0 to the correct igt
+        if (new_igt > self.seconds && new_igt < self.seconds + 10.0) || new_igt == 0.0 || self.seconds == 0.0 {
+            self.seconds = new_igt
+        }
+    }
 }
 
 impl State {
@@ -71,17 +90,15 @@ impl State {
 
     fn refresh_mem_values(&mut self) -> Result<&str, &str> {
 
-        // todo: make this part of precess info struct and only do once
-        let process = &self.process_info.as_ref().unwrap().game;
-
-        let Ok(main_module_addr) = process.get_module_address("SOR4.exe")
-        else {
-            asr::print_message("COULD NOT GET MODULE ADDRESS");
-            return Err("COULD NOT GET MODULE ADDRESS");
+        let main_module_addr = match &self.process_info {
+            Some(info) => info.main_module_address,
+            None => return Err("Process info is not initialized")
         };
 
+        let process = &self.process_info.as_ref().unwrap().game;
+
         // refresh values with watcher updates
-        match read_value::<i32>(process, main_module_addr, &SUBMENUS_OPEN_PATH, &mut self.watchers.submenus_open, "Submenus") {
+        match read_value::<i32>(process, main_module_addr , &SUBMENUS_OPEN_PATH, &mut self.watchers.submenus_open, "Submenus") {
             Ok(value) => self.values.submenus_open = value,
             Err(_) => {}
         }; 
@@ -90,7 +107,7 @@ impl State {
             Err(_) => {}
         };
         match read_value::<i32>(process, main_module_addr, &TOTAL_FRAME_COUNT, &mut self.watchers.acumm_frames, "Accumulated Frames") {
-            Ok(value) => self.values.acumm_frames = value,
+            Ok(value) => self.values.accum_frames = value,
             Err(_) => {}
         }
 
@@ -123,14 +140,8 @@ impl State {
         }
 
         // igt
-        // todo: make igt into a atruct with values to add in a Pair and implement methods to only update it if the new calculated value is appropriate
-        //       and make it part of state
-        
-        if self.values.current_section_frames.current - 1000 < self.values.current_section_frames.old {
-            let igt_value = (self.values.current_section_frames.current + self.values.acumm_frames.current) as i64 * 1000 / 60;
-            let game_time = asr::time::Duration::milliseconds(igt_value);
-            asr::timer::set_game_time(game_time);
-        }
+        self.igt.calculate_game_time(*self.values.current_section_frames, *self.values.accum_frames);
+        asr::timer::set_game_time(asr::time::Duration::seconds_f64( self.igt.seconds ));
 
 
     }
@@ -146,8 +157,9 @@ static LS_CONTROLLER: Spinlock<State> = const_spinlock(State {
     values: MemoryValues { 
         submenus_open: Pair { old: 0, current: 0 }, 
         current_section_frames: Pair { old: 0, current: 0 },
-        acumm_frames: Pair { old: 0, current: 0 }
+        accum_frames: Pair { old: 0, current: 0 }
     },
+    igt: GameTime { seconds: 0.0 },
     started_up: false,
 });
 

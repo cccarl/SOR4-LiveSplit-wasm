@@ -1,12 +1,22 @@
+// TODO
+// igt survival
+// splits
+// settings
+
 use spinning_top::{const_spinlock, Spinlock};
 use asr::{Process, watcher::{Watcher, Pair}};
-use bytemuck;
+use bytemuck::Pod;
+use widestring::U16CStr;
 
 const SUBMENUS_OPEN_PATH: [u64; 4] = [0x014B_FAB0, 0x0, 0x78, 0x28];
 const CURR_SECTION_FRAMES: [u64; 4] = [0x014BFE38, 0x10, 0xA8, 0x38];
 const TOTAL_FRAME_COUNT: [u64; 5] = [0x014BFE38, 0x0, 0x78, 0x10, 0x2C];
+const TOTAL_FRAME_COUNT_SURVIVAL: [u64; 5] = [0x014BFE38, 0x0, 0x78, 0x10, 0x14];
+const CURRENT_MUSIC: [u64; 5] = [0x014BFE30, 0x0, 0x70, 0x28, 0xC];
+const CURRENT_LVL: [u64; 6] = [0x014BFE38, 0x0, 0x50, 0x18, 0x108, 0x3E];
 
-fn read_value<T: Copy + std::fmt::Display + bytemuck::Pod>(process: &Process, main_module_addr: asr::Address, pointer_path: &[u64], watcher: &mut Watcher<T>, var_key: &str) -> Result<Pair<T>, String> {
+
+fn read_value<T: std::fmt::Display + Pod>(process: &Process, main_module_addr: asr::Address, pointer_path: &[u64], watcher: &mut Watcher<T>, var_key: &str) -> Result<Pair<T>, String> {
 
     match process.read_pointer_path64::<T>(main_module_addr.0, pointer_path) {
         Ok(mem_value) => {
@@ -19,6 +29,23 @@ fn read_value<T: Copy + std::fmt::Display + bytemuck::Pod>(process: &Process, ma
             Err(format!("Could not refresh '{}' value: {:?}", var_key, e))
         }
     }
+
+}
+
+fn read_value_string(process: &Process, main_module_addr: asr::Address, pointer_path: &[u64], var_key: &str) -> Option<String> {
+
+    let buf = match process.read_pointer_path64::<[u16; 100]>(main_module_addr.0, pointer_path) {
+        Ok(bytes) => bytes,
+        Err(_) => return None,
+    };
+
+    let cstr = U16CStr::from_slice_truncate(&buf).unwrap();
+
+    let parsed_string = cstr.to_string().unwrap_or("".to_string());
+
+    asr::timer::set_variable(var_key, &parsed_string);
+
+    Some(parsed_string)
 
 }
 
@@ -43,18 +70,23 @@ struct State {
     values: MemoryValues,
     started_up: bool,
     igt: GameTime,
+    game_mode: GameMode,
 }
 
 struct Watchers {
     submenus_open: Watcher<i32>,
     current_section_frames: Watcher<i32>,
     acumm_frames: Watcher<i32>,
+    acumm_frames_survival: Watcher<i32>,
 }
 
 struct MemoryValues {
     submenus_open: Pair<i32>,
     current_section_frames: Pair<i32>,
     accum_frames: Pair<i32>,
+    accum_frames_survival: Pair<i32>,
+    current_lvl: String,
+    current_music: String,
 }
 
 struct GameTime {
@@ -71,6 +103,11 @@ impl GameTime {
             self.seconds = new_igt
         }
     }
+}
+
+enum GameMode {
+    Normal,
+    Survival,
 }
 
 impl State {
@@ -110,6 +147,14 @@ impl State {
             Ok(value) => self.values.accum_frames = value,
             Err(_) => {}
         }
+        match read_value::<i32>(process, main_module_addr, &TOTAL_FRAME_COUNT_SURVIVAL, &mut self.watchers.acumm_frames_survival, "Accumulated Frames Survival") {
+            Ok(value) => self.values.accum_frames_survival = value,
+            Err(_) => {}
+        }
+
+        self.values.current_lvl = read_value_string(process, main_module_addr, &CURRENT_LVL, "Level Name").unwrap_or("".to_string());
+
+        self.values.current_music = read_value_string(process, main_module_addr, &CURRENT_MUSIC, "Music Name").unwrap_or("".to_string());
 
         Ok("Success")
     }
@@ -129,9 +174,22 @@ impl State {
             return;
         }
 
-        // refresh mem values if possible, the values will be updated using the watchers
+        if !self.process_info.as_ref().unwrap().game.is_open() {
+            self.process_info = None;
+            return;
+        }
+
+        // refresh mem values if possible, the values will be updated using the watchers or just directly reading lvl and music strings
         if self.refresh_mem_values().is_err() {
             return;
+        }
+
+
+        // start condition
+        // TODO: don't start in training mode, start settings
+        if self.values.current_section_frames.current > 0 && self.values.current_section_frames.current < 60 && self.values.current_section_frames.changed() {
+            self.igt.seconds = 0.0;
+            asr::timer::start();
         }
 
         // reset condition
@@ -153,14 +211,19 @@ static LS_CONTROLLER: Spinlock<State> = const_spinlock(State {
         submenus_open: Watcher::new(),
         current_section_frames: Watcher::new(),
         acumm_frames: Watcher::new(),
+        acumm_frames_survival: Watcher::new(),
     },
     values: MemoryValues { 
         submenus_open: Pair { old: 0, current: 0 }, 
         current_section_frames: Pair { old: 0, current: 0 },
-        accum_frames: Pair { old: 0, current: 0 }
+        accum_frames: Pair { old: 0, current: 0 },
+        accum_frames_survival: Pair { old: 0, current: 0 },
+        current_lvl: String::new(),
+        current_music: String::new(),
     },
     igt: GameTime { seconds: 0.0 },
     started_up: false,
+    game_mode: GameMode::Normal,
 });
 
 #[no_mangle]

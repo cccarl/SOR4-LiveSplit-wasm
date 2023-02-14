@@ -9,6 +9,7 @@ edition = "2021"
 spinning_top = "0.2.3"
 asr = { git = "https://github.com/CryZe/asr", features = ["integer-vars", "derive"] }
 bytemuck = "1.13.0"
+widestring = "1.0.2"
 
 [lib]
 crate-type = ["cdylib"]

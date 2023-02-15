@@ -1,10 +1,10 @@
 // TODO
-// igt survival
 // splits
+// diff versions
 // settings
 
 use spinning_top::{const_spinlock, Spinlock};
-use asr::{Process, watcher::{Watcher, Pair}};
+use asr::{Process, watcher::{Watcher, Pair}, time::Duration};
 use bytemuck::Pod;
 use widestring::U16CStr;
 
@@ -16,17 +16,16 @@ const CURRENT_MUSIC: [u64; 5] = [0x014BFE30, 0x0, 0x70, 0x28, 0xC];
 const CURRENT_LVL: [u64; 6] = [0x014BFE38, 0x0, 0x50, 0x18, 0x108, 0x3E];
 
 
-fn read_value<T: std::fmt::Display + Pod>(process: &Process, main_module_addr: asr::Address, pointer_path: &[u64], watcher: &mut Watcher<T>, var_key: &str) -> Result<Pair<T>, String> {
+fn read_value<T: std::fmt::Display + Pod>(process: &Process, main_module_addr: asr::Address, pointer_path: &[u64], watcher: &mut Watcher<T>, var_key: &str) -> Option<Pair<T>> {
 
     match process.read_pointer_path64::<T>(main_module_addr.0, pointer_path) {
         Ok(mem_value) => {
             asr::timer::set_variable(var_key, &format!("{}", mem_value));
             //asr::print_message(&format!("{}", mem_value));
-            Ok(*watcher.update_infallible(mem_value))
+            Some(*watcher.update_infallible(mem_value))
         },
-        Err(e) => {
-            asr::print_message(&format!("Could not refresh '{}' value: {:?}", var_key, e));
-            Err(format!("Could not refresh '{}' value: {:?}", var_key, e))
+        Err(_) => {
+            None
         }
     }
 
@@ -46,6 +45,19 @@ fn read_value_string(process: &Process, main_module_addr: asr::Address, pointer_
     asr::timer::set_variable(var_key, &parsed_string);
 
     Some(parsed_string)
+
+}
+
+fn check_current_game_mode(level_name: &String) -> GameMode {
+    if level_name.contains("stage") || level_name.contains("boss") || level_name == "" {
+        GameMode::Normal
+    }
+    else {
+        GameMode::Survival
+    }
+}
+
+struct Settings {
 
 }
 
@@ -113,16 +125,22 @@ enum GameMode {
 impl State {
 
     fn startup(&mut self) {
+        asr::set_tick_rate(10.0);
         asr::print_message("Started up!!!!!");
+
+        asr::user_settings::add_bool("splits_stage1_1", "Streets", false);
+        asr::user_settings::add_bool("splits_stage1_2", "Sewers", false);
+        asr::user_settings::add_bool("splits_stage1_3", "Diva", true);
+
         self.started_up = true;
     }
 
     fn init(&mut self) {
-        asr::print_message("ATTACHED!!!!!!!!!!");
-        asr::set_tick_rate(60.0);
         asr::timer::set_variable("Submenus", "-");
         asr::timer::set_variable("Current section frames", "-");
         asr::timer::set_variable("Accumulated Frames", "-");
+        asr::set_tick_rate(60.0);
+        asr::print_message("ATTACHED!!!!!!!!!!");
     }
 
     fn refresh_mem_values(&mut self) -> Result<&str, &str> {
@@ -136,20 +154,20 @@ impl State {
 
         // refresh values with watcher updates
         match read_value::<i32>(process, main_module_addr , &SUBMENUS_OPEN_PATH, &mut self.watchers.submenus_open, "Submenus") {
-            Ok(value) => self.values.submenus_open = value,
-            Err(_) => {}
+            Some(value) => self.values.submenus_open = value,
+            None => {}
         }; 
         match read_value::<i32>(process, main_module_addr, &CURR_SECTION_FRAMES, &mut self.watchers.current_section_frames, "Current section frames") {
-            Ok(value) => self.values.current_section_frames = value,
-            Err(_) => {}
+            Some(value) => self.values.current_section_frames = value,
+            None => {}
         };
         match read_value::<i32>(process, main_module_addr, &TOTAL_FRAME_COUNT, &mut self.watchers.acumm_frames, "Accumulated Frames") {
-            Ok(value) => self.values.accum_frames = value,
-            Err(_) => {}
+            Some(value) => self.values.accum_frames = value,
+            None => {}
         }
         match read_value::<i32>(process, main_module_addr, &TOTAL_FRAME_COUNT_SURVIVAL, &mut self.watchers.acumm_frames_survival, "Accumulated Frames Survival") {
-            Ok(value) => self.values.accum_frames_survival = value,
-            Err(_) => {}
+            Some(value) => self.values.accum_frames_survival = value,
+            None => {}
         }
 
         self.values.current_lvl = read_value_string(process, main_module_addr, &CURRENT_LVL, "Level Name").unwrap_or("".to_string());
@@ -174,7 +192,9 @@ impl State {
             return;
         }
 
+        // if game is closed detatch and look for the game again
         if !self.process_info.as_ref().unwrap().game.is_open() {
+            asr::set_tick_rate(10.0);
             self.process_info = None;
             return;
         }
@@ -183,23 +203,39 @@ impl State {
         if self.refresh_mem_values().is_err() {
             return;
         }
-
+    
 
         // start condition
-        // TODO: don't start in training mode, start settings
-        if self.values.current_section_frames.current > 0 && self.values.current_section_frames.current < 60 && self.values.current_section_frames.changed() {
+        // TODO: start settings
+        if self.values.current_section_frames.current > 0 && self.values.current_section_frames.current < 60 && self.values.current_section_frames.changed()
+        && self.values.current_lvl != "" && !self.values.current_lvl.contains("training")   {
             self.igt.seconds = 0.0;
+            self.game_mode = check_current_game_mode(&self.values.current_lvl);
             asr::timer::start();
+        }
+
+        // igt
+        match self.game_mode {
+            GameMode::Normal => self.igt.calculate_game_time(*self.values.current_section_frames, *self.values.accum_frames),
+            GameMode::Survival => self.igt.calculate_game_time(*self.values.current_section_frames, *self.values.accum_frames_survival),
+        }
+        
+        if asr::timer::state() == asr::timer::TimerState::Running {
+            asr::timer::set_game_time(Duration::seconds_f64( self.igt.seconds ))
         }
 
         // reset condition
         if self.values.submenus_open.current == 0 && self.values.submenus_open.old == 2 {
+            asr::timer::set_game_time(Duration::microseconds(0));
             asr::timer::reset();
         }
 
-        // igt
-        self.igt.calculate_game_time(*self.values.current_section_frames, *self.values.accum_frames);
-        asr::timer::set_game_time(asr::time::Duration::seconds_f64( self.igt.seconds ));
+        // split confitions
+        if self.values.accum_frames.current > self.values.accum_frames.old {
+            asr::timer::split();
+        }
+
+
 
 
     }

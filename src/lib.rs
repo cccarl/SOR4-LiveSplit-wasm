@@ -1,12 +1,12 @@
 // TODO
-// splits
 // diff versions
-// settings
 
+use std::collections::HashMap;
 use spinning_top::{const_spinlock, Spinlock};
 use asr::{Process, watcher::{Watcher, Pair}, time::Duration};
 use bytemuck::Pod;
 use widestring::U16CStr;
+use once_cell::sync::Lazy;
 
 const SUBMENUS_OPEN_PATH: [u64; 4] = [0x014B_FAB0, 0x0, 0x78, 0x28];
 const CURR_SECTION_FRAMES: [u64; 4] = [0x014BFE38, 0x10, 0xA8, 0x38];
@@ -57,10 +57,6 @@ fn check_current_game_mode(level_name: &String) -> GameMode {
     }
 }
 
-struct Settings {
-
-}
-
 struct ProcessInfo {
     game: Process,
     main_module_address: asr::Address,
@@ -83,6 +79,7 @@ struct State {
     started_up: bool,
     igt: GameTime,
     game_mode: GameMode,
+    settings: Lazy<HashMap<String, bool>>,
 }
 
 struct Watchers {
@@ -122,17 +119,72 @@ enum GameMode {
     Survival,
 }
 
+struct Setting<'a> {
+    key: &'a str,
+    description: &'a str,
+    default_value: bool,
+}
+
 impl State {
 
     fn startup(&mut self) {
         asr::set_tick_rate(10.0);
         asr::print_message("Started up!!!!!");
 
-        asr::user_settings::add_bool("splits_stage1_1", "Streets", false);
-        asr::user_settings::add_bool("splits_stage1_2", "Sewers", false);
-        asr::user_settings::add_bool("splits_stage1_3", "Diva", true);
+        // key, description, default value
+        let settings_data = vec![
+            Setting {key: "splits_stage1_1", description: "Streets", default_value: false},
+            Setting {key: "splits_stage1_2", description: "Sewers", default_value: false},
+            Setting {key: "splits_stage1_3", description: "Diva", default_value: true},
+            Setting {key: "splits_stage2_1", description: "Jail", default_value: false},
+            Setting {key: "splits_stage2_2", description: "HQ", default_value: false},
+            Setting {key: "splits_stage2_3", description: "Commissioner", default_value: true},
+            Setting {key: "splits_stage3_1a", description: "Outside", default_value: false},
+            Setting {key: "splits_stage3_1b", description: "Inside", default_value: false},
+            Setting {key: "splits_stage3_1c", description: "Hallway", default_value: false},
+            Setting {key: "splits_stage3_2", description: "Nora", default_value: true},
+            Setting {key: "splits_stage4_1", description: "Pier", default_value: false},
+            Setting {key: "splits_stage4_bossMusic", description: "Estel Start", default_value: false},
+            Setting {key: "splits_stage4_2", description: "Estel", default_value: true},
+            Setting {key: "splits_stage5_1", description: "Underground", default_value: false},
+            Setting {key: "splits_stage5_2", description: "Bar", default_value: false},
+            Setting {key: "splits_stage5_3", description: "Barbon", default_value: true},
+            Setting {key: "splits_stage6_1", description: "Streets", default_value: false},
+            Setting {key: "splits_stage6_2a", description: "Dojo - Galsia Room", default_value: false},
+            Setting {key: "splits_stage6_2b", description: "Dojo - Donovan Room", default_value: false},
+            Setting {key: "splits_stage6_2c", description: "Dojo - Pheasant Room", default_value: false},
+            Setting {key: "splits_stage6_3", description: "Shiva", default_value: true},
+            Setting {key: "splits_stage7_bossMusic", description: "Estel Start", default_value: false},
+            Setting {key: "splits_stage7_1", description: "Estel", default_value: true},
+            Setting {key: "splits_stage8_1", description: "Gallery", default_value: false},
+            Setting {key: "splits_stage8_2", description: "Beyo and Riha", default_value: true},
+            Setting {key: "splits_stage9_1", description: "Sauna", default_value: false},
+            Setting {key: "splits_stage9_2", description: "Elevator", default_value: false},
+            Setting {key: "splits_stage9_3", description: "Max", default_value: true},
+            Setting {key: "splits_stage10_1a", description: "Rooftops - Arrival", default_value: false},
+            Setting {key: "splits_stage10_1b", description: "Rooftops - Advance", default_value: false},
+            Setting {key: "splits_stage10_1c", description: "Rooftops - Wrecking Balls", default_value: false},
+            Setting {key: "splits_stage10_3", description: "DJ K-Washi", default_value: true},
+            Setting {key: "splits_stage11_1", description: "Platform", default_value: false},
+            Setting {key: "splits_stage11_2a", description: "Boarding the Airplane", default_value: false},
+            Setting {key: "splits_stage11_2b", description: "Inside the Airplane", default_value: false},
+            Setting {key: "splits_stage11_3", description: "Mr. Y", default_value: true},
+            Setting {key: "splits_stage12_1", description: "Wreckage", default_value: false},
+            Setting {key: "splits_stage12_2a", description: "Hallway", default_value: false},
+            Setting {key: "splits_stage12_2b", description: "Inside Castle", default_value: false},
+            Setting {key: "splits_stage12_2c", description: "Ms. Y", default_value: false},
+            Setting {key: "splits_stage12_3", description: "Ms. Y, Mr. Y and Y Mecha", default_value: true},
+            Setting {key: "splits_bossRush_newBoss", description: "Boss Rush - Boss Defeated", default_value: true},
+            Setting {key: "splits_llenge_01_bossrun_v3", description: "Boss Rush Completed", default_value: true},
+            Setting {key: "splits_survival", description: "Survival Mode - Level Complete", default_value: true},
+        ];
+
+        for setting in settings_data {
+            self.settings.insert(setting.key.to_string(), asr::user_settings::add_bool(setting.key, setting.description, setting.default_value));
+        }
 
         self.started_up = true;
+
     }
 
     fn init(&mut self) {
@@ -230,13 +282,18 @@ impl State {
             asr::timer::reset();
         }
 
-        // split confitions
+
+
+        // split conditions
+        // TODO
+        // implement hashset that keeps track of splits to avoid double splits
+        // music splits
         if self.values.accum_frames.current > self.values.accum_frames.old {
-            asr::timer::split();
+            let settings_key = format!("splits_{}", self.values.current_lvl);
+            if self.settings.contains_key(&settings_key) && self.settings[&settings_key] {
+                asr::timer::split();
+            }
         }
-
-
-
 
     }
 }
@@ -260,6 +317,7 @@ static LS_CONTROLLER: Spinlock<State> = const_spinlock(State {
     igt: GameTime { seconds: 0.0 },
     started_up: false,
     game_mode: GameMode::Normal,
+    settings: Lazy::new(|| HashMap::new()),
 });
 
 #[no_mangle]

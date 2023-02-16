@@ -1,6 +1,3 @@
-// TODO
-// diff versions
-
 use std::collections::HashMap;
 use spinning_top::{const_spinlock, Spinlock};
 use asr::{Process, watcher::{Watcher, Pair}, time::Duration};
@@ -8,6 +5,8 @@ use bytemuck::Pod;
 use widestring::U16CStr;
 use once_cell::sync::Lazy;
 
+// for V07-s r13648
+// TODO: multiple versions abstraction / implementation
 const SUBMENUS_OPEN_PATH: [u64; 4] = [0x014B_FAB0, 0x0, 0x78, 0x28];
 const CURR_SECTION_FRAMES: [u64; 4] = [0x014BFE38, 0x10, 0xA8, 0x38];
 const TOTAL_FRAME_COUNT: [u64; 5] = [0x014BFE38, 0x0, 0x78, 0x10, 0x2C];
@@ -20,7 +19,7 @@ fn read_value<T: std::fmt::Display + Pod>(process: &Process, main_module_addr: a
 
     match process.read_pointer_path64::<T>(main_module_addr.0, pointer_path) {
         Ok(mem_value) => {
-            asr::timer::set_variable(var_key, &format!("{}", mem_value));
+            asr::timer::set_variable(var_key, &format!("{mem_value}"));
             //asr::print_message(&format!("{}", mem_value));
             Some(*watcher.update_infallible(mem_value))
         },
@@ -49,7 +48,7 @@ fn read_value_string(process: &Process, main_module_addr: asr::Address, pointer_
 }
 
 fn check_current_game_mode(level_name: &String) -> GameMode {
-    if level_name.contains("stage") || level_name.contains("boss") || level_name == "" {
+    if level_name.contains("stage") || level_name.contains("boss") || level_name.is_empty() {
         GameMode::Normal
     }
     else {
@@ -69,17 +68,6 @@ impl ProcessInfo {
             game: process,
         }
     }
-}
-
-
-struct State {
-    process_info: Option<ProcessInfo>,
-    watchers: Watchers,
-    values: MemoryValues,
-    started_up: bool,
-    igt: GameTime,
-    game_mode: GameMode,
-    settings: Lazy<HashMap<String, bool>>,
 }
 
 struct Watchers {
@@ -114,6 +102,7 @@ impl GameTime {
     }
 }
 
+#[derive(PartialEq)]
 enum GameMode {
     Normal,
     Survival,
@@ -123,6 +112,17 @@ struct Setting<'a> {
     key: &'a str,
     description: &'a str,
     default_value: bool,
+}
+
+struct State {
+    process_info: Option<ProcessInfo>,
+    watchers: Watchers,
+    values: MemoryValues,
+    started_up: bool,
+    igt: GameTime,
+    game_mode: GameMode,
+    settings: Lazy<HashMap<String, bool>>,
+    last_split: String,
 }
 
 impl State {
@@ -144,7 +144,7 @@ impl State {
             Setting {key: "splits_stage3_1c", description: "Hallway", default_value: false},
             Setting {key: "splits_stage3_2", description: "Nora", default_value: true},
             Setting {key: "splits_stage4_1", description: "Pier", default_value: false},
-            Setting {key: "splits_stage4_bossMusic", description: "Estel Start", default_value: false},
+            Setting {key: "Music_Level04!BOSS", description: "Estel Start", default_value: false},
             Setting {key: "splits_stage4_2", description: "Estel", default_value: true},
             Setting {key: "splits_stage5_1", description: "Underground", default_value: false},
             Setting {key: "splits_stage5_2", description: "Bar", default_value: false},
@@ -154,7 +154,7 @@ impl State {
             Setting {key: "splits_stage6_2b", description: "Dojo - Donovan Room", default_value: false},
             Setting {key: "splits_stage6_2c", description: "Dojo - Pheasant Room", default_value: false},
             Setting {key: "splits_stage6_3", description: "Shiva", default_value: true},
-            Setting {key: "splits_stage7_bossMusic", description: "Estel Start", default_value: false},
+            Setting {key: "splits_Music_Level07!BOSS", description: "Estel Start", default_value: false},
             Setting {key: "splits_stage7_1", description: "Estel", default_value: true},
             Setting {key: "splits_stage8_1", description: "Gallery", default_value: false},
             Setting {key: "splits_stage8_2", description: "Beyo and Riha", default_value: true},
@@ -205,21 +205,20 @@ impl State {
         let process = &self.process_info.as_ref().unwrap().game;
 
         // refresh values with watcher updates
-        match read_value::<i32>(process, main_module_addr , &SUBMENUS_OPEN_PATH, &mut self.watchers.submenus_open, "Submenus") {
-            Some(value) => self.values.submenus_open = value,
-            None => {}
-        }; 
-        match read_value::<i32>(process, main_module_addr, &CURR_SECTION_FRAMES, &mut self.watchers.current_section_frames, "Current section frames") {
-            Some(value) => self.values.current_section_frames = value,
-            None => {}
-        };
-        match read_value::<i32>(process, main_module_addr, &TOTAL_FRAME_COUNT, &mut self.watchers.acumm_frames, "Accumulated Frames") {
-            Some(value) => self.values.accum_frames = value,
-            None => {}
+        if let Some(value) = read_value::<i32>(process, main_module_addr , &SUBMENUS_OPEN_PATH, &mut self.watchers.submenus_open, "Submenus") {
+            self.values.submenus_open = value;
         }
-        match read_value::<i32>(process, main_module_addr, &TOTAL_FRAME_COUNT_SURVIVAL, &mut self.watchers.acumm_frames_survival, "Accumulated Frames Survival") {
-            Some(value) => self.values.accum_frames_survival = value,
-            None => {}
+
+        if let Some(value) = read_value::<i32>(process, main_module_addr, &CURR_SECTION_FRAMES, &mut self.watchers.current_section_frames, "Current section frames") {
+            self.values.current_section_frames = value;
+        }
+
+        if let Some(value) = read_value::<i32>(process, main_module_addr, &TOTAL_FRAME_COUNT, &mut self.watchers.acumm_frames, "Accumulated Frames") {
+            self.values.accum_frames = value;
+        }
+
+        if let Some(value) = read_value::<i32>(process, main_module_addr, &TOTAL_FRAME_COUNT_SURVIVAL, &mut self.watchers.acumm_frames_survival, "Accumulated Frames Survival") {
+            self.values.accum_frames_survival = value;
         }
 
         self.values.current_lvl = read_value_string(process, main_module_addr, &CURRENT_LVL, "Level Name").unwrap_or("".to_string());
@@ -237,7 +236,7 @@ impl State {
 
         if self.process_info.is_none() {
             self.process_info = Process::attach("SOR4.exe").map(ProcessInfo::new);
-            if !self.process_info.is_none() {
+            if self.process_info.is_some() {
                 self.init();
             }
             // early return to never work with a None process
@@ -255,12 +254,12 @@ impl State {
         if self.refresh_mem_values().is_err() {
             return;
         }
-    
 
         // start condition
         // TODO: start settings
         if self.values.current_section_frames.current > 0 && self.values.current_section_frames.current < 60 && self.values.current_section_frames.changed()
-        && self.values.current_lvl != "" && !self.values.current_lvl.contains("training")   {
+        && !self.values.current_lvl.is_empty() && !self.values.current_lvl.contains("training") {
+            self.last_split = String::new();
             self.igt.seconds = 0.0;
             self.game_mode = check_current_game_mode(&self.values.current_lvl);
             asr::timer::start();
@@ -282,15 +281,30 @@ impl State {
             asr::timer::reset();
         }
 
-
-
         // split conditions
-        // TODO
-        // implement hashset that keeps track of splits to avoid double splits
-        // music splits
-        if self.values.accum_frames.current > self.values.accum_frames.old {
+        // splits - section ended and accum frames are updated
+        if self.values.accum_frames.current > self.values.accum_frames.old || self.values.accum_frames_survival.current > self.values.accum_frames.old {
             let settings_key = format!("splits_{}", self.values.current_lvl);
-            if self.settings.contains_key(&settings_key) && self.settings[&settings_key] {
+            if (self.settings.contains_key(&settings_key) && self.settings[&settings_key] || self.settings["splits_survival"] && self.game_mode == GameMode::Survival) && self.last_split != settings_key {
+                self.last_split = settings_key;
+                asr::timer::split();
+            }
+        }
+
+        // splits - music triggers
+        if self.values.current_music == "Music_Level07!BOSS" || self.values.current_music == "Music_Level04!BOSS" {
+            let settings_key = format!("splits_{}", self.values.current_music);
+            if self.settings.contains_key(&settings_key) && self.settings[&settings_key] && self.last_split != settings_key {
+                self.last_split = settings_key;
+                asr::timer::split();
+            }
+        }
+        
+        // splits - boss rush music trigger
+        if self.values.current_music.contains("BossRush") && self.values.current_music != "Music_BossRush!A00_Diva" && self.settings["splits_bossRush_newBoss"] {
+            let settings_key = format!("splits_{}", self.values.current_music);
+            if self.last_split != settings_key {
+                self.last_split = settings_key;
                 asr::timer::split();
             }
         }
@@ -317,7 +331,8 @@ static LS_CONTROLLER: Spinlock<State> = const_spinlock(State {
     igt: GameTime { seconds: 0.0 },
     started_up: false,
     game_mode: GameMode::Normal,
-    settings: Lazy::new(|| HashMap::new()),
+    settings: Lazy::new(HashMap::new),
+    last_split: String::new(),
 });
 
 #[no_mangle]

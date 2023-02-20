@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use spinning_top::{const_spinlock, Spinlock};
-use asr::{Process, watcher::{Watcher, Pair}, time::Duration};
-use bytemuck::Pod;
+use asr::{Process, watcher::{Pair}, time::Duration};
 use widestring::U16CStr;
 use once_cell::sync::Lazy;
 
@@ -14,20 +13,10 @@ const TOTAL_FRAME_COUNT_SURVIVAL: [u64; 5] = [0x014BFE38, 0x0, 0x78, 0x10, 0x14]
 const CURRENT_MUSIC: [u64; 5] = [0x014BFE30, 0x0, 0x70, 0x28, 0xC];
 const CURRENT_LVL: [u64; 6] = [0x014BFE38, 0x0, 0x50, 0x18, 0x108, 0x3E];
 
-
-fn read_value<T: std::fmt::Display + Pod>(process: &Process, main_module_addr: asr::Address, pointer_path: &[u64], watcher: &mut Watcher<T>, var_key: &str) -> Option<Pair<T>> {
-
-    match process.read_pointer_path64::<T>(main_module_addr.0, pointer_path) {
-        Ok(mem_value) => {
-            asr::timer::set_variable(var_key, &format!("{mem_value}"));
-            //asr::print_message(&format!("{}", mem_value));
-            Some(*watcher.update_infallible(mem_value))
-        },
-        Err(_) => {
-            None
-        }
-    }
-
+fn update_pair_i32(variable_name: &str, new_value: i32, pair: &mut Pair<i32>) {
+    asr::timer::set_variable(variable_name, &format!("{new_value}"));
+    pair.old = pair.current;
+    pair.current = new_value;
 }
 
 fn read_value_string(process: &Process, main_module_addr: asr::Address, pointer_path: &[u64], var_key: &str) -> Option<String> {
@@ -44,7 +33,6 @@ fn read_value_string(process: &Process, main_module_addr: asr::Address, pointer_
     asr::timer::set_variable(var_key, &parsed_string);
 
     Some(parsed_string)
-
 }
 
 fn check_current_game_mode(level_name: &String) -> GameMode {
@@ -68,13 +56,6 @@ impl ProcessInfo {
             game: process,
         }
     }
-}
-
-struct Watchers {
-    submenus_open: Watcher<i32>,
-    current_section_frames: Watcher<i32>,
-    acumm_frames: Watcher<i32>,
-    acumm_frames_survival: Watcher<i32>,
 }
 
 struct MemoryValues {
@@ -116,7 +97,6 @@ struct Setting<'a> {
 
 struct State {
     process_info: Option<ProcessInfo>,
-    watchers: Watchers,
     values: MemoryValues,
     started_up: bool,
     igt: GameTime,
@@ -129,7 +109,6 @@ impl State {
 
     fn startup(&mut self) {
         asr::set_tick_rate(10.0);
-        asr::print_message("Started up!!!!!");
 
         // key, description, default value
         let settings_data = vec![
@@ -204,21 +183,20 @@ impl State {
 
         let process = &self.process_info.as_ref().unwrap().game;
 
-        // refresh values with watcher updates
-        if let Some(value) = read_value::<i32>(process, main_module_addr , &SUBMENUS_OPEN_PATH, &mut self.watchers.submenus_open, "Submenus") {
-            self.values.submenus_open = value;
+        if let Ok(value) = process.read_pointer_path64::<i32>(main_module_addr.0, &SUBMENUS_OPEN_PATH) {
+            update_pair_i32("Submenus", value, &mut self.values.submenus_open);
         }
 
-        if let Some(value) = read_value::<i32>(process, main_module_addr, &CURR_SECTION_FRAMES, &mut self.watchers.current_section_frames, "Current section frames") {
-            self.values.current_section_frames = value;
+        if let Ok(value) = process.read_pointer_path64::<i32>(main_module_addr.0, &CURR_SECTION_FRAMES) {
+            update_pair_i32("Current section frames", value, &mut self.values.current_section_frames);
         }
 
-        if let Some(value) = read_value::<i32>(process, main_module_addr, &TOTAL_FRAME_COUNT, &mut self.watchers.acumm_frames, "Accumulated Frames") {
-            self.values.accum_frames = value;
+        if let Ok(value) = process.read_pointer_path64::<i32>(main_module_addr.0, &TOTAL_FRAME_COUNT) {
+            update_pair_i32("Accumulated Frames", value, &mut self.values.accum_frames);
         }
 
-        if let Some(value) = read_value::<i32>(process, main_module_addr, &TOTAL_FRAME_COUNT_SURVIVAL, &mut self.watchers.acumm_frames_survival, "Accumulated Frames Survival") {
-            self.values.accum_frames_survival = value;
+        if let Ok(value) = process.read_pointer_path64::<i32>(main_module_addr.0, &TOTAL_FRAME_COUNT_SURVIVAL) {
+            update_pair_i32("Accumulated Frames Survival", value, &mut self.values.accum_frames_survival);
         }
 
         self.values.current_lvl = read_value_string(process, main_module_addr, &CURRENT_LVL, "Level Name").unwrap_or("".to_string());
@@ -250,7 +228,7 @@ impl State {
             return;
         }
 
-        // refresh mem values if possible, the values will be updated using the watchers or just directly reading lvl and music strings
+        // refresh mem values if possible, i32 values are in pairs (old and current) and strings only have the current value
         if self.refresh_mem_values().is_err() {
             return;
         }
@@ -314,12 +292,6 @@ impl State {
 
 static LS_CONTROLLER: Spinlock<State> = const_spinlock(State {
     process_info: None,
-    watchers: Watchers {
-        submenus_open: Watcher::new(),
-        current_section_frames: Watcher::new(),
-        acumm_frames: Watcher::new(),
-        acumm_frames_survival: Watcher::new(),
-    },
     values: MemoryValues { 
         submenus_open: Pair { old: 0, current: 0 }, 
         current_section_frames: Pair { old: 0, current: 0 },

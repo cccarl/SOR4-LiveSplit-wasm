@@ -1,0 +1,26 @@
+use crate::{Version, PointerPaths};
+
+
+pub fn get_pointer_paths(version: Version) -> PointerPaths {
+
+    match version {
+        Version::Unsupported => PointerPaths::default(),
+        Version::V08SR14424 => PointerPaths {
+            submenus_open: vec![0x014DCDF8, 0x0, 0x78, 0x28],
+            current_section_frames: vec![0x014DD180, 0x10, 0xA8, 0x40],
+            accum_frames: vec![0x014DD180, 0x0, 0x78, 0x10, 0x2C],
+            accum_frames_survival: vec![0x014DD180, 0x0, 0x78, 0x10, 0x14],
+            current_lvl: vec![0x014DD180, 0x0, 0x50, 0x20, 0x108, 0x3E],
+            current_music: vec![0x014DD180, 0x0, 0x58, 0x30, 0xC]
+        },
+        Version::V07SR13648 => PointerPaths {
+            submenus_open: vec![0x014BFAB0, 0x0, 0x78, 0x28],
+            current_section_frames: vec![0x014BFE38, 0x10, 0xA8, 0x38],
+            accum_frames: vec![0x014BFE38, 0x0, 0x78, 0x10, 0x2C],
+            accum_frames_survival: vec![0x014BFE38, 0x0, 0x78, 0x10, 0x14],
+            current_lvl: vec![0x014BFE30, 0x0, 0x70, 0x28, 0xC],
+            current_music: vec![0x014BFE38, 0x0, 0x50, 0x18, 0x108, 0x3E]
+        },
+    }
+
+}

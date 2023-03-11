@@ -1,17 +1,11 @@
-use std::collections::HashMap;
+use std::{collections::HashMap};
 use spinning_top::{const_spinlock, Spinlock};
 use asr::{Process, watcher::{Pair}, time::Duration};
 use widestring::U16CStr;
 use once_cell::sync::Lazy;
 
-// for V07-s r13648
-// TODO: multiple versions abstraction / implementation
-const SUBMENUS_OPEN_PATH: [u64; 4] = [0x014B_FAB0, 0x0, 0x78, 0x28];
-const CURR_SECTION_FRAMES: [u64; 4] = [0x014BFE38, 0x10, 0xA8, 0x38];
-const TOTAL_FRAME_COUNT: [u64; 5] = [0x014BFE38, 0x0, 0x78, 0x10, 0x2C];
-const TOTAL_FRAME_COUNT_SURVIVAL: [u64; 5] = [0x014BFE38, 0x0, 0x78, 0x10, 0x14];
-const CURRENT_MUSIC: [u64; 5] = [0x014BFE30, 0x0, 0x70, 0x28, 0xC];
-const CURRENT_LVL: [u64; 6] = [0x014BFE38, 0x0, 0x50, 0x18, 0x108, 0x3E];
+mod settings;
+mod memory;
 
 fn update_pair_i32(variable_name: &str, new_value: i32, pair: &mut Pair<i32>) {
     asr::timer::set_variable(variable_name, &format!("{new_value}"));
@@ -58,6 +52,17 @@ impl ProcessInfo {
     }
 }
 
+#[derive(Default)]
+pub struct PointerPaths {
+    submenus_open: Vec<u64>,
+    current_section_frames: Vec<u64>,
+    accum_frames: Vec<u64>,
+    accum_frames_survival: Vec<u64>,
+    current_lvl: Vec<u64>,
+    current_music: Vec<u64>,
+}
+
+#[derive(Default)]
 struct MemoryValues {
     submenus_open: Pair<i32>,
     current_section_frames: Pair<i32>,
@@ -68,18 +73,20 @@ struct MemoryValues {
 }
 
 struct GameTime {
-    seconds: f64,
+    igt: asr::time::Duration,
 }
 
 impl GameTime {
     // LS usually reads garbage for a moment on loading screens so this ensures that the new game time to be set is a reasonable value
     fn calculate_game_time(&mut self, current_section_frames: i32, accum_frames: i32) {
         let new_igt: f64 = (current_section_frames + accum_frames) as f64 / 60.0;
+        let igt_in_seconds =  self.igt.as_seconds_f64();
 
         // do not update igt if the new time is lower or it did a huge jump forwards, also reset to 0 and jump from a 0 to the correct igt
-        if (new_igt > self.seconds && new_igt < self.seconds + 10.0) || new_igt == 0.0 || self.seconds == 0.0 {
-            self.seconds = new_igt
+        if (new_igt > igt_in_seconds && new_igt < igt_in_seconds + 10.0) || new_igt == 0.0 || igt_in_seconds == 0.0 {
+            self.igt = asr::time_util::frame_count::<60>((current_section_frames + accum_frames) as u64);
         }
+
     }
 }
 
@@ -89,20 +96,23 @@ enum GameMode {
     Survival,
 }
 
-struct Setting<'a> {
-    key: &'a str,
-    description: &'a str,
-    default_value: bool,
+#[derive(Debug, Clone, Copy)]
+pub enum Version {
+    Unsupported,
+    V08SR14424,
+    V07SR13648,
 }
 
 struct State {
     process_info: Option<ProcessInfo>,
-    values: MemoryValues,
+    values: Lazy<MemoryValues>,
+    pointer_paths: Lazy<PointerPaths>,
     started_up: bool,
     igt: GameTime,
     game_mode: GameMode,
     settings: Lazy<HashMap<String, bool>>,
     last_split: String,
+    version: Version,
 }
 
 impl State {
@@ -111,52 +121,7 @@ impl State {
         asr::set_tick_rate(10.0);
 
         // key, description, default value
-        let settings_data = vec![
-            Setting {key: "splits_stage1_1", description: "Streets", default_value: false},
-            Setting {key: "splits_stage1_2", description: "Sewers", default_value: false},
-            Setting {key: "splits_stage1_3", description: "Diva", default_value: true},
-            Setting {key: "splits_stage2_1", description: "Jail", default_value: false},
-            Setting {key: "splits_stage2_2", description: "HQ", default_value: false},
-            Setting {key: "splits_stage2_3", description: "Commissioner", default_value: true},
-            Setting {key: "splits_stage3_1a", description: "Outside", default_value: false},
-            Setting {key: "splits_stage3_1b", description: "Inside", default_value: false},
-            Setting {key: "splits_stage3_1c", description: "Hallway", default_value: false},
-            Setting {key: "splits_stage3_2", description: "Nora", default_value: true},
-            Setting {key: "splits_stage4_1", description: "Pier", default_value: false},
-            Setting {key: "Music_Level04!BOSS", description: "Estel Start", default_value: false},
-            Setting {key: "splits_stage4_2", description: "Estel", default_value: true},
-            Setting {key: "splits_stage5_1", description: "Underground", default_value: false},
-            Setting {key: "splits_stage5_2", description: "Bar", default_value: false},
-            Setting {key: "splits_stage5_3", description: "Barbon", default_value: true},
-            Setting {key: "splits_stage6_1", description: "Streets", default_value: false},
-            Setting {key: "splits_stage6_2a", description: "Dojo - Galsia Room", default_value: false},
-            Setting {key: "splits_stage6_2b", description: "Dojo - Donovan Room", default_value: false},
-            Setting {key: "splits_stage6_2c", description: "Dojo - Pheasant Room", default_value: false},
-            Setting {key: "splits_stage6_3", description: "Shiva", default_value: true},
-            Setting {key: "splits_Music_Level07!BOSS", description: "Estel Start", default_value: false},
-            Setting {key: "splits_stage7_1", description: "Estel", default_value: true},
-            Setting {key: "splits_stage8_1", description: "Gallery", default_value: false},
-            Setting {key: "splits_stage8_2", description: "Beyo and Riha", default_value: true},
-            Setting {key: "splits_stage9_1", description: "Sauna", default_value: false},
-            Setting {key: "splits_stage9_2", description: "Elevator", default_value: false},
-            Setting {key: "splits_stage9_3", description: "Max", default_value: true},
-            Setting {key: "splits_stage10_1a", description: "Rooftops - Arrival", default_value: false},
-            Setting {key: "splits_stage10_1b", description: "Rooftops - Advance", default_value: false},
-            Setting {key: "splits_stage10_1c", description: "Rooftops - Wrecking Balls", default_value: false},
-            Setting {key: "splits_stage10_3", description: "DJ K-Washi", default_value: true},
-            Setting {key: "splits_stage11_1", description: "Platform", default_value: false},
-            Setting {key: "splits_stage11_2a", description: "Boarding the Airplane", default_value: false},
-            Setting {key: "splits_stage11_2b", description: "Inside the Airplane", default_value: false},
-            Setting {key: "splits_stage11_3", description: "Mr. Y", default_value: true},
-            Setting {key: "splits_stage12_1", description: "Wreckage", default_value: false},
-            Setting {key: "splits_stage12_2a", description: "Hallway", default_value: false},
-            Setting {key: "splits_stage12_2b", description: "Inside Castle", default_value: false},
-            Setting {key: "splits_stage12_2c", description: "Ms. Y", default_value: false},
-            Setting {key: "splits_stage12_3", description: "Ms. Y, Mr. Y and Y Mecha", default_value: true},
-            Setting {key: "splits_bossRush_newBoss", description: "Boss Rush - Boss Defeated", default_value: true},
-            Setting {key: "splits_llenge_01_bossrun_v3", description: "Boss Rush Completed", default_value: true},
-            Setting {key: "splits_survival", description: "Survival Mode - Level Complete", default_value: true},
-        ];
+        let settings_data = settings::get_settings();
 
         for setting in settings_data {
             self.settings.insert(setting.key.to_string(), asr::user_settings::add_bool(setting.key, setting.description, setting.default_value));
@@ -170,10 +135,27 @@ impl State {
         asr::timer::set_variable("Submenus", "-");
         asr::timer::set_variable("Current section frames", "-");
         asr::timer::set_variable("Accumulated Frames", "-");
+
+        let sor4_size = self.process_info.as_ref().unwrap().game.get_module_size("SOR4.exe").unwrap_or(0);
+
+        match sor4_size {
+            0x1657000 => self.version = Version::V08SR14424,
+            0x1638000 => self.version = Version::V07SR13648,
+            _ => {
+                asr::print_message(&format!("Patch not supported. Module Memory Size: {:X}", sor4_size));
+                self.version = Version::Unsupported;
+            },
+        }
+        
+        asr::timer::set_variable("Version", &format!("{:?}", self.version));
+
+        *self.pointer_paths = memory::get_pointer_paths(self.version);
+
         asr::set_tick_rate(60.0);
-        asr::print_message("ATTACHED!!!!!!!!!!");
+        asr::print_message("Attached!!!");
     }
 
+    // TODO: move to memory module
     fn refresh_mem_values(&mut self) -> Result<&str, &str> {
 
         let main_module_addr = match &self.process_info {
@@ -183,25 +165,25 @@ impl State {
 
         let process = &self.process_info.as_ref().unwrap().game;
 
-        if let Ok(value) = process.read_pointer_path64::<i32>(main_module_addr.0, &SUBMENUS_OPEN_PATH) {
+        if let Ok(value) = process.read_pointer_path64::<i32>(main_module_addr.0, &self.pointer_paths.submenus_open) {
             update_pair_i32("Submenus", value, &mut self.values.submenus_open);
         }
 
-        if let Ok(value) = process.read_pointer_path64::<i32>(main_module_addr.0, &CURR_SECTION_FRAMES) {
+        if let Ok(value) = process.read_pointer_path64::<i32>(main_module_addr.0, &self.pointer_paths.current_section_frames) {
             update_pair_i32("Current section frames", value, &mut self.values.current_section_frames);
         }
 
-        if let Ok(value) = process.read_pointer_path64::<i32>(main_module_addr.0, &TOTAL_FRAME_COUNT) {
+        if let Ok(value) = process.read_pointer_path64::<i32>(main_module_addr.0, &self.pointer_paths.accum_frames) {
             update_pair_i32("Accumulated Frames", value, &mut self.values.accum_frames);
         }
 
-        if let Ok(value) = process.read_pointer_path64::<i32>(main_module_addr.0, &TOTAL_FRAME_COUNT_SURVIVAL) {
+        if let Ok(value) = process.read_pointer_path64::<i32>(main_module_addr.0, &self.pointer_paths.accum_frames_survival) {
             update_pair_i32("Accumulated Frames Survival", value, &mut self.values.accum_frames_survival);
         }
 
-        self.values.current_lvl = read_value_string(process, main_module_addr, &CURRENT_LVL, "Level Name").unwrap_or("".to_string());
+        self.values.current_lvl = read_value_string(process, main_module_addr, &self.pointer_paths.current_lvl, "Level Name").unwrap_or("".to_string());
 
-        self.values.current_music = read_value_string(process, main_module_addr, &CURRENT_MUSIC, "Music Name").unwrap_or("".to_string());
+        self.values.current_music = read_value_string(process, main_module_addr, &self.pointer_paths.current_music, "Music Name").unwrap_or("".to_string());
 
         Ok("Success")
     }
@@ -238,7 +220,7 @@ impl State {
         if self.values.current_section_frames.current > 0 && self.values.current_section_frames.current < 60 && self.values.current_section_frames.changed()
         && !self.values.current_lvl.is_empty() && !self.values.current_lvl.contains("training") {
             self.last_split = String::new();
-            self.igt.seconds = 0.0;
+            self.igt.igt = asr::time::Duration::seconds(0);
             self.game_mode = check_current_game_mode(&self.values.current_lvl);
             asr::timer::start();
         }
@@ -250,7 +232,7 @@ impl State {
         }
         
         if asr::timer::state() == asr::timer::TimerState::Running {
-            asr::timer::set_game_time(Duration::seconds_f64( self.igt.seconds ))
+            asr::timer::set_game_time(self.igt.igt);
         }
 
         // reset condition
@@ -292,19 +274,14 @@ impl State {
 
 static LS_CONTROLLER: Spinlock<State> = const_spinlock(State {
     process_info: None,
-    values: MemoryValues { 
-        submenus_open: Pair { old: 0, current: 0 }, 
-        current_section_frames: Pair { old: 0, current: 0 },
-        accum_frames: Pair { old: 0, current: 0 },
-        accum_frames_survival: Pair { old: 0, current: 0 },
-        current_lvl: String::new(),
-        current_music: String::new(),
-    },
-    igt: GameTime { seconds: 0.0 },
+    values: Lazy::new(MemoryValues::default),
+    pointer_paths: Lazy::new(PointerPaths::default),
+    igt: GameTime { igt: asr::time::Duration::seconds(0) },
     started_up: false,
     game_mode: GameMode::Normal,
     settings: Lazy::new(HashMap::new),
     last_split: String::new(),
+    version: Version::Unsupported,
 });
 
 #[no_mangle]

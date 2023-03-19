@@ -1,11 +1,12 @@
-use std::{collections::HashMap};
 use spinning_top::{const_spinlock, Spinlock};
 use asr::{Process, watcher::{Pair}, time::Duration};
 use widestring::U16CStr;
 use once_cell::sync::Lazy;
+use settings::Settings;
 
 mod settings;
 mod memory;
+mod splits;
 
 fn update_pair_i32(variable_name: &str, new_value: i32, pair: &mut Pair<i32>) {
     asr::timer::set_variable(variable_name, &format!("{new_value}"));
@@ -13,20 +14,24 @@ fn update_pair_i32(variable_name: &str, new_value: i32, pair: &mut Pair<i32>) {
     pair.current = new_value;
 }
 
-fn read_value_string(process: &Process, main_module_addr: asr::Address, pointer_path: &[u64], var_key: &str) -> Option<String> {
+fn read_widestring_and_update_pair(process: &Process, main_module_addr: asr::Address, pair: &mut Pair<String>, pointer_path: &[u64], var_key: &str) {
 
     let buf = match process.read_pointer_path64::<[u16; 100]>(main_module_addr.0, pointer_path) {
         Ok(bytes) => bytes,
-        Err(_) => return None,
+        Err(_) => return,
     };
 
+    if buf.len() == 0 {
+        return;
+    }
     let cstr = U16CStr::from_slice_truncate(&buf).unwrap();
 
     let parsed_string = cstr.to_string().unwrap_or("".to_string());
 
     asr::timer::set_variable(var_key, &parsed_string);
-
-    Some(parsed_string)
+    pair.old = pair.current.clone();
+    pair.current = parsed_string;
+    
 }
 
 fn check_current_game_mode(level_name: &String) -> GameMode {
@@ -68,8 +73,8 @@ struct MemoryValues {
     current_section_frames: Pair<i32>,
     accum_frames: Pair<i32>,
     accum_frames_survival: Pair<i32>,
-    current_lvl: String,
-    current_music: String,
+    current_lvl: Pair<String>,
+    current_music: Pair<String>,
 }
 
 struct GameTime {
@@ -110,8 +115,7 @@ struct State {
     started_up: bool,
     igt: GameTime,
     game_mode: GameMode,
-    settings: Lazy<HashMap<String, bool>>,
-    last_split: String,
+    settings: Option<Settings>,
     version: Version,
 }
 
@@ -119,14 +123,7 @@ impl State {
 
     fn startup(&mut self) {
         asr::set_tick_rate(10.0);
-
-        // key, description, default value
-        let settings_data = settings::get_settings();
-
-        for setting in settings_data {
-            self.settings.insert(setting.key.to_string(), asr::user_settings::add_bool(setting.key, setting.description, setting.default_value));
-        }
-
+        self.settings = Some(Settings::register());
         self.started_up = true;
 
     }
@@ -158,6 +155,7 @@ impl State {
     // TODO: move to memory module
     fn refresh_mem_values(&mut self) -> Result<&str, &str> {
 
+        // TODO: only query on init(), not every update
         let main_module_addr = match &self.process_info {
             Some(info) => info.main_module_address,
             None => return Err("Process info is not initialized")
@@ -181,9 +179,9 @@ impl State {
             update_pair_i32("Accumulated Frames Survival", value, &mut self.values.accum_frames_survival);
         }
 
-        self.values.current_lvl = read_value_string(process, main_module_addr, &self.pointer_paths.current_lvl, "Level Name").unwrap_or("".to_string());
+        read_widestring_and_update_pair(process, main_module_addr, &mut self.values.current_lvl, &self.pointer_paths.current_lvl, "Level Name");
 
-        self.values.current_music = read_value_string(process, main_module_addr, &self.pointer_paths.current_music, "Music Name").unwrap_or("".to_string());
+        read_widestring_and_update_pair(process, main_module_addr, &mut self.values.current_music, &self.pointer_paths.current_music, "Music Name");
 
         Ok("Success")
     }
@@ -214,14 +212,13 @@ impl State {
         if self.refresh_mem_values().is_err() {
             return;
         }
-
+        
         // start condition
         // TODO: start settings
-        if self.values.current_section_frames.current > 0 && self.values.current_section_frames.current < 60 && self.values.current_section_frames.changed()
-        && !self.values.current_lvl.is_empty() && !self.values.current_lvl.contains("training") {
-            self.last_split = String::new();
+        if self.values.current_section_frames.current > 10 && self.values.current_section_frames.current < 60 && self.values.current_section_frames.changed()
+         {
             self.igt.igt = asr::time::Duration::seconds(0);
-            self.game_mode = check_current_game_mode(&self.values.current_lvl);
+            self.game_mode = check_current_game_mode(&self.values.current_lvl.current);
             asr::timer::start();
         }
 
@@ -242,32 +239,12 @@ impl State {
         }
 
         // split conditions
-        // splits - section ended and accum frames are updated
-        if self.values.accum_frames.current > self.values.accum_frames.old || self.values.accum_frames_survival.current > self.values.accum_frames.old {
-            let settings_key = format!("splits_{}", self.values.current_lvl);
-            if (self.settings.contains_key(&settings_key) && self.settings[&settings_key] || self.settings["splits_survival"] && self.game_mode == GameMode::Survival) && self.last_split != settings_key {
-                self.last_split = settings_key;
-                asr::timer::split();
-            }
+        if self.should_split() {
+            asr::timer::split();
         }
 
-        // splits - music triggers
-        if self.values.current_music == "Music_Level07!BOSS" || self.values.current_music == "Music_Level04!BOSS" {
-            let settings_key = format!("splits_{}", self.values.current_music);
-            if self.settings.contains_key(&settings_key) && self.settings[&settings_key] && self.last_split != settings_key {
-                self.last_split = settings_key;
-                asr::timer::split();
-            }
-        }
-        
-        // splits - boss rush music trigger
-        if self.values.current_music.contains("BossRush") && self.values.current_music != "Music_BossRush!A00_Diva" && self.settings["splits_bossRush_newBoss"] {
-            let settings_key = format!("splits_{}", self.values.current_music);
-            if self.last_split != settings_key {
-                self.last_split = settings_key;
-                asr::timer::split();
-            }
-        }
+        // stops livesplits game time jitter
+        asr::timer::pause_game_time();
 
     }
 }
@@ -279,8 +256,7 @@ static LS_CONTROLLER: Spinlock<State> = const_spinlock(State {
     igt: GameTime { igt: asr::time::Duration::seconds(0) },
     started_up: false,
     game_mode: GameMode::Normal,
-    settings: Lazy::new(HashMap::new),
-    last_split: String::new(),
+    settings: None,
     version: Version::Unsupported,
 });
 

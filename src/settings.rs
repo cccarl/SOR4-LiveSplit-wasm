@@ -1,56 +1,135 @@
-pub struct Setting<'a> {
-    pub key: &'a str,
-    pub description: &'a str,
-    pub default_value: bool,
-}
-
-pub fn get_settings<'a>() -> Vec<Setting<'a>> {
-
-    vec![
-            Setting {key: "splits_stage1_1", description: "Streets", default_value: false},
-            Setting {key: "splits_stage1_2", description: "Sewers", default_value: false},
-            Setting {key: "splits_stage1_3", description: "Diva", default_value: true},
-            Setting {key: "splits_stage2_1", description: "Jail", default_value: false},
-            Setting {key: "splits_stage2_2", description: "HQ", default_value: false},
-            Setting {key: "splits_stage2_3", description: "Commissioner", default_value: true},
-            Setting {key: "splits_stage3_1a", description: "Outside", default_value: false},
-            Setting {key: "splits_stage3_1b", description: "Inside", default_value: false},
-            Setting {key: "splits_stage3_1c", description: "Hallway", default_value: false},
-            Setting {key: "splits_stage3_2", description: "Nora", default_value: true},
-            Setting {key: "splits_stage4_1", description: "Pier", default_value: false},
-            Setting {key: "Music_Level04!BOSS", description: "Estel Start", default_value: false},
-            Setting {key: "splits_stage4_2", description: "Estel", default_value: true},
-            Setting {key: "splits_stage5_1", description: "Underground", default_value: false},
-            Setting {key: "splits_stage5_2", description: "Bar", default_value: false},
-            Setting {key: "splits_stage5_3", description: "Barbon", default_value: true},
-            Setting {key: "splits_stage6_1", description: "Streets", default_value: false},
-            Setting {key: "splits_stage6_2a", description: "Dojo - Galsia Room", default_value: false},
-            Setting {key: "splits_stage6_2b", description: "Dojo - Donovan Room", default_value: false},
-            Setting {key: "splits_stage6_2c", description: "Dojo - Pheasant Room", default_value: false},
-            Setting {key: "splits_stage6_3", description: "Shiva", default_value: true},
-            Setting {key: "splits_Music_Level07!BOSS", description: "Estel Start", default_value: false},
-            Setting {key: "splits_stage7_1", description: "Estel", default_value: true},
-            Setting {key: "splits_stage8_1", description: "Gallery", default_value: false},
-            Setting {key: "splits_stage8_2", description: "Beyo and Riha", default_value: true},
-            Setting {key: "splits_stage9_1", description: "Sauna", default_value: false},
-            Setting {key: "splits_stage9_2", description: "Elevator", default_value: false},
-            Setting {key: "splits_stage9_3", description: "Max", default_value: true},
-            Setting {key: "splits_stage10_1a", description: "Rooftops - Arrival", default_value: false},
-            Setting {key: "splits_stage10_1b", description: "Rooftops - Advance", default_value: false},
-            Setting {key: "splits_stage10_1c", description: "Rooftops - Wrecking Balls", default_value: false},
-            Setting {key: "splits_stage10_3", description: "DJ K-Washi", default_value: true},
-            Setting {key: "splits_stage11_1", description: "Platform", default_value: false},
-            Setting {key: "splits_stage11_2a", description: "Boarding the Airplane", default_value: false},
-            Setting {key: "splits_stage11_2b", description: "Inside the Airplane", default_value: false},
-            Setting {key: "splits_stage11_3", description: "Mr. Y", default_value: true},
-            Setting {key: "splits_stage12_1", description: "Wreckage", default_value: false},
-            Setting {key: "splits_stage12_2a", description: "Hallway", default_value: false},
-            Setting {key: "splits_stage12_2b", description: "Inside Castle", default_value: false},
-            Setting {key: "splits_stage12_2c", description: "Ms. Y", default_value: false},
-            Setting {key: "splits_stage12_3", description: "Ms. Y, Mr. Y and Y Mecha", default_value: true},
-            Setting {key: "splits_bossRush_newBoss", description: "Boss Rush - Boss Defeated", default_value: true},
-            Setting {key: "splits_llenge_01_bossrun_v3", description: "Boss Rush Completed", default_value: true},
-            Setting {key: "splits_survival", description: "Survival Mode - Level Complete", default_value: true},
-    ]
-
+#[derive(asr::Settings)]
+pub struct Settings {
+    #[default = true]
+    /// Boss Rush - Boss Defeated
+    pub splits_boss_rush_new_boss: bool,
+    #[default = true]
+    /// Boss Rush Completed
+    pub splits_boss_rush_complete: bool,
+    #[default = false]
+    /// Survival Mode - Level Complete
+    pub splits_survival: bool,
+    #[default = false]
+    /// Streets
+    pub splits_stage1_1: bool,
+    #[default = false]
+    /// Sewers
+    pub splits_stage1_2: bool,
+    #[default = true]
+    /// Diva
+    pub splits_stage1_3: bool,
+    #[default = false]
+    /// Jail
+    pub splits_stage2_1: bool,
+    #[default = false]
+    /// HQ
+    pub splits_stage2_2: bool,
+    #[default = true]
+    /// Commissioner
+    pub splits_stage2_3: bool,
+    #[default = false]
+    /// Outside
+    pub splits_stage3_1a: bool,
+    #[default = false]
+    /// Inside
+    pub splits_stage3_1b: bool,
+    #[default = false]
+    /// Hallway
+    pub splits_stage3_1c: bool,
+    #[default = true]
+    /// Nora
+    pub splits_stage3_2: bool,
+    #[default = false]
+    /// Pier
+    pub splits_stage4_1: bool,
+    #[default = false]
+    /// Estel Start
+    pub splits_music_level04_boss: bool,
+    #[default = true]
+    /// Estel
+    pub splits_stage4_2: bool,
+    #[default = false]
+    /// Underground
+    pub splits_stage5_1: bool,
+    #[default = false]
+    /// Bar
+    pub splits_stage5_2: bool,
+    #[default = true]
+    /// Barbon
+    pub splits_stage5_3: bool,
+    #[default = false]
+    /// Streets
+    pub splits_stage6_1: bool,
+    #[default = false]
+    /// Dojo - Galsia Room
+    pub splits_stage6_2a: bool,
+    #[default = false]
+    /// Dojo - Donovan Room
+    pub splits_stage6_2b: bool,
+    #[default = false]
+    /// Dojo - Pheasant Room
+    pub splits_stage6_2c: bool,
+    #[default = true]
+    /// Shiva
+    pub splits_stage6_3: bool,
+    #[default = false]
+    /// Estel Start
+    pub splits_music_level07_boss: bool,
+    #[default = true]
+    /// Estel
+    pub splits_stage7_1: bool,
+    #[default = false]
+    /// Gallery
+    pub splits_stage8_1: bool,
+    #[default = true]
+    /// Beyo and Riha
+    pub splits_stage8_2: bool,
+    #[default = false]
+    /// Sauna
+    pub splits_stage9_1: bool,
+    #[default = false]
+    /// Elevator
+    pub splits_stage9_2: bool,
+    #[default = true]
+    /// Max
+    pub splits_stage9_3: bool,
+    #[default = false]
+    /// Rooftops - Arrival
+    pub splits_stage10_1a: bool,
+    #[default = false]
+    /// Rooftops - Advance
+    pub splits_stage10_1b: bool,
+    #[default = false]
+    /// Rooftops - Wrecking Balls
+    pub splits_stage10_1c: bool,
+    #[default = true]
+    /// DJ K-Washi
+    pub splits_stage10_3: bool,
+    #[default = false]
+    /// Platform
+    pub splits_stage11_1: bool,
+    #[default = false]
+    /// Boarding the Airplane
+    pub splits_stage11_2a: bool,
+    #[default = false]
+    /// Inside the Airplane
+    pub splits_stage11_2b: bool,
+    #[default = true]
+    /// Mr. Y
+    pub splits_stage11_3: bool,
+    #[default = false]
+    /// Wreckage
+    pub splits_stage12_1: bool,
+    #[default = false]
+    /// Hallway
+    pub splits_stage12_2a: bool,
+    #[default = false]
+    /// Inside Castle
+    pub splits_stage12_2b: bool,
+    #[default = false]
+    /// Ms. Y
+    pub splits_stage12_2c: bool,
+    #[default = true]
+    /// Ms. Y, Mr. Y and Y Mecha
+    pub splits_stage12_3: bool,
 }

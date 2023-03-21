@@ -5,7 +5,7 @@ pub fn get_pointer_paths(version: Version) -> PointerPaths {
 
     match version {
         Version::Unsupported => PointerPaths::default(),
-        Version::V08SR14424 => PointerPaths {
+        Version::V08SR14424 | Version::V08SR18163M => PointerPaths {
             submenus_open: vec![0x014DCDF8, 0x0, 0x78, 0x28],
             current_section_frames: vec![0x014DD180, 0x10, 0xA8, 0x40],
             accum_frames: vec![0x014DD180, 0x0, 0x78, 0x10, 0x2C],

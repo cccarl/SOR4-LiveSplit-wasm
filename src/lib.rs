@@ -104,6 +104,7 @@ enum GameMode {
 #[derive(Debug, Clone, Copy)]
 pub enum Version {
     Unsupported,
+    V08SR18163M,
     V08SR14424,
     V07SR13648,
 }
@@ -136,6 +137,7 @@ impl State {
         let sor4_size = self.process_info.as_ref().unwrap().game.get_module_size("SOR4.exe").unwrap_or(0);
 
         match sor4_size {
+            0x1650000 => self.version = Version::V08SR18163M,
             0x1657000 => self.version = Version::V08SR14424,
             0x1638000 => self.version = Version::V07SR13648,
             _ => {
@@ -143,13 +145,12 @@ impl State {
                 self.version = Version::Unsupported;
             },
         }
-        
+
         asr::timer::set_variable("Version", &format!("{:?}", self.version));
 
         *self.pointer_paths = memory::get_pointer_paths(self.version);
 
         asr::set_tick_rate(60.0);
-        asr::print_message("Attached!!!");
     }
 
     // TODO: move to memory module
